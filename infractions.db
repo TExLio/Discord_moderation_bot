@@ -1,0 +1,14 @@
+async def init_db():
+    async with aiosqlite.connect(DB_FILE) as db:
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS infractions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            guild_id INTEGER,
+            user_id INTEGER,
+            username TEXT,
+            action TEXT,
+            reason TEXT,
+            time TEXT
+        )
+        """)
+        await db.commit()
