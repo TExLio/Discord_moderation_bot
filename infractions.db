@@ -1,14 +1,101 @@
+import aiosqlite
+from datetime import datetime
+
+# ------------------------------
+# DATABASE FILE
+# ------------------------------
+DB_FILE = "infractions.db"
+
+# ------------------------------
+# INITIALIZE DATABASE
+# ------------------------------
 async def init_db():
+    """Initialize the database with infractions and server config tables"""
     async with aiosqlite.connect(DB_FILE) as db:
+        # Table for infractions (multi-server ready)
         await db.execute("""
         CREATE TABLE IF NOT EXISTS infractions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            guild_id INTEGER,
-            user_id INTEGER,
-            username TEXT,
-            action TEXT,
-            reason TEXT,
-            time TEXT
+            guild_id INTEGER NOT NULL,   -- Server ID
+            user_id INTEGER NOT NULL,    -- User ID
+            username TEXT NOT NULL,      -- Username#Discrim
+            action TEXT NOT NULL,        -- Warned/Kicked/Muted/Deleted
+            reason TEXT,                 -- Reason for action
+            time TEXT NOT NULL           -- UTC timestamp
+        )
+        """)
+
+        # Table for per-server config (optional, can store channel IDs, role IDs, etc.)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS server_configs (
+            guild_id INTEGER PRIMARY KEY,   -- Server ID
+            log_channel_id INTEGER,         -- Optional log channel
+            ping_role_id INTEGER            -- Optional role to ping
         )
         """)
         await db.commit()
+    print("✅ Database initialized successfully!")
+
+# ------------------------------
+# LOG AN INFRACTION
+# ------------------------------
+async def log_infraction(guild_id, user_id, username, action, reason=""):
+    """Add a row to infractions table"""
+    async with aiosqlite.connect(DB_FILE) as db:
+        await db.execute(
+            "INSERT INTO infractions (guild_id, user_id, username, action, reason, time) VALUES (?, ?, ?, ?, ?, ?)",
+            (guild_id, user_id, username, action, reason, datetime.utcnow().isoformat())
+        )
+        await db.commit()
+    print(f"⚠️ Logged infraction for {username} in guild {guild_id}.")
+
+# ------------------------------
+# ADD OR UPDATE SERVER CONFIG
+# ------------------------------
+async def save_server_config(guild_id, log_channel_id=None, ping_role_id=None):
+    """Insert or update a server's config"""
+    async with aiosqlite.connect(DB_FILE) as db:
+        await db.execute("""
+        INSERT INTO server_configs (guild_id, log_channel_id, ping_role_id)
+        VALUES (?, ?, ?)
+        ON CONFLICT(guild_id) DO UPDATE SET
+            log_channel_id=excluded.log_channel_id,
+            ping_role_id=excluded.ping_role_id
+        """, (guild_id, log_channel_id, ping_role_id))
+        await db.commit()
+    print(f"✅ Server config saved for guild {guild_id}.")
+
+# ------------------------------
+# GET SERVER CONFIG
+# ------------------------------
+async def get_server_config(guild_id):
+    """Return server config as a dictionary"""
+    async with aiosqlite.connect(DB_FILE) as db:
+        cursor = await db.execute("SELECT log_channel_id, ping_role_id FROM server_configs WHERE guild_id=?", (guild_id,))
+        row = await cursor.fetchone()
+        if row:
+            return {"log_channel_id": row[0], "ping_role_id": row[1]}
+        return None
+
+# ------------------------------
+# EXAMPLE USAGE
+# ------------------------------
+import asyncio
+
+async def main():
+    # Initialize DB
+    await init_db()
+
+    # Add server configs (multiple servers)
+    await save_server_config(111111111111111111, log_channel_id=222222222222222222, ping_role_id=333333333333333333)  # Server 1
+    await save_server_config(444444444444444444, log_channel_id=555555555555555555, ping_role_id=666666666666666666)  # Server 2
+
+    # Log some infractions
+    await log_infraction(111111111111111111, 777777777777777777, "UserOne#1234", "Warned", "Spamming")
+    await log_infraction(444444444444444444, 888888888888888888, "UserTwo#5678", "Muted", "Toxic messages")
+
+    # Fetch server config
+    config = await get_server_config(111111111111111111)
+    print("Server 1 config:", config)
+
+asyncio.run(main())
